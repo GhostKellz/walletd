@@ -1,0 +1,201 @@
+syntax = "proto3";
+package walletd;
+
+// Wallet service definition
+service WalletService {
+  // ZID operations
+  rpc GenerateZID(GenerateZidRequest) returns (GenerateZidResponse);
+  rpc GetAddress(GetAddressRequest) returns (GetAddressResponse);
+  rpc RecoverWallet(RecoverWalletRequest) returns (RecoverWalletResponse);
+  
+  // Transaction operations
+  rpc SignTransaction(SignTransactionRequest) returns (SignTransactionResponse);
+  rpc SendTransaction(SendTransactionRequest) returns (SendTransactionResponse);
+  rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse);
+  
+  // Wallet operations
+  rpc CreateWallet(CreateWalletRequest) returns (CreateWalletResponse);
+  rpc ListWallets(ListWalletsRequest) returns (ListWalletsResponse);
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  
+  // Signature verification
+  rpc VerifySignature(VerifySignatureRequest) returns (VerifySignatureResponse);
+}
+
+// ZID Generation
+message GenerateZidRequest {
+  string passphrase = 1;
+  optional string name = 2;
+}
+
+message GenerateZidResponse {
+  bool success = 1;
+  string wallet_id = 2;
+  string address = 3;
+  string public_key = 4;
+  string qid = 5;
+  optional string domain = 6;
+  optional string error_message = 7;
+}
+
+// Address retrieval
+message GetAddressRequest {
+  string wallet_id = 1;
+}
+
+message GetAddressResponse {
+  bool success = 1;
+  string address = 2;
+  string public_key = 3;
+  string qid = 4;
+  optional string domain = 5;
+  optional string error_message = 6;
+}
+
+// Wallet recovery
+message RecoverWalletRequest {
+  string name = 1;
+  optional string mnemonic = 2;
+  optional string private_key = 3;
+  optional string passphrase = 4;
+  optional string derivation_path = 5;
+  optional string account_type = 6;
+}
+
+message RecoverWalletResponse {
+  bool success = 1;
+  string wallet_id = 2;
+  string address = 3;
+  optional string error_message = 4;
+}
+
+// Transaction signing
+message SignTransactionRequest {
+  string wallet_id = 1;
+  string to_address = 2;
+  string amount = 3;
+  optional string token_address = 4;
+  optional uint64 gas_limit = 5;
+  optional string gas_price = 6;
+  optional string data = 7;
+  string passphrase = 8;
+}
+
+message SignTransactionResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  string signed_data = 3;
+  string transaction_hash = 4;
+  optional string error_message = 5;
+}
+
+// Transaction sending
+message SendTransactionRequest {
+  string from_wallet_id = 1;
+  string to_address = 2;
+  string amount = 3;
+  optional string token_address = 4;
+  optional uint64 gas_limit = 5;
+  optional string gas_price = 6;
+  optional string data = 7;
+  string passphrase = 8;
+}
+
+message SendTransactionResponse {
+  bool success = 1;
+  string transaction_id = 2;
+  string transaction_hash = 3;
+  optional string error_message = 4;
+}
+
+// Transaction retrieval
+message GetTransactionRequest {
+  string transaction_id = 1;
+}
+
+message GetTransactionResponse {
+  bool success = 1;
+  optional TransactionInfo transaction = 2;
+  optional string error_message = 3;
+}
+
+// Wallet creation
+message CreateWalletRequest {
+  string name = 1;
+  optional string account_type = 2;
+  optional string passphrase = 3;
+  optional string network = 4;
+}
+
+message CreateWalletResponse {
+  bool success = 1;
+  optional WalletInfo wallet = 2;
+  optional string error_message = 3;
+}
+
+// Wallet listing
+message ListWalletsRequest {
+  // Empty for now, could add pagination later
+}
+
+message ListWalletsResponse {
+  bool success = 1;
+  repeated WalletInfo wallets = 2;
+  optional string error_message = 3;
+}
+
+// Balance retrieval
+message GetBalanceRequest {
+  string wallet_id = 1;
+}
+
+message GetBalanceResponse {
+  bool success = 1;
+  repeated BalanceInfo balances = 2;
+  optional string error_message = 3;
+}
+
+// Signature verification
+message VerifySignatureRequest {
+  string public_key = 1;
+  string data = 2;
+  string signature = 3;
+}
+
+message VerifySignatureResponse {
+  bool success = 1;
+  bool valid = 2;
+  optional string error_message = 3;
+}
+
+// Data structures
+message WalletInfo {
+  string id = 1;
+  string name = 2;
+  string address = 3;
+  string public_key = 4;
+  string account_type = 5;
+  string network = 6;
+  string balance = 7;
+  int64 created_at = 8;
+}
+
+message TransactionInfo {
+  string id = 1;
+  string wallet_id = 2;
+  string tx_hash = 3;
+  string from_address = 4;
+  string to_address = 5;
+  string amount = 6;
+  string token_address = 7;
+  string status = 8;
+  int64 block_number = 9;
+  int64 created_at = 10;
+}
+
+message BalanceInfo {
+  string token_symbol = 1;
+  string balance = 2;
+  int32 decimals = 3;
+  string token_address = 4;
+}

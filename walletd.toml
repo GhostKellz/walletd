@@ -1,0 +1,38 @@
+# walletd configuration file
+
+[network]
+chain_id = 1337
+network_name = "ghostchain"
+default_gas_limit = 21000
+default_gas_price = 20000000000
+
+[security]
+require_auth = true
+session_timeout_seconds = 3600
+max_concurrent_sessions = 100
+enable_hardware_security = false
+enable_hmac_auth = true
+hmac_key_rotation_days = 30
+
+[features]
+enable_evm = true
+enable_cli = true
+enable_json_rpc = true
+enable_metrics = true
+enable_multi_algorithm = true
+enable_batch_operations = true
+
+[crypto]
+default_algorithm = "ed25519"
+supported_algorithms = ["ed25519", "secp256k1", "secp256r1"]
+deterministic_salt = "walletd-passphrase-salt"
+enable_zig_ffi = false
+key_derivation_iterations = 100000
+
+# Server endpoints
+grpc_bind_address = "127.0.0.1:50051"
+api_bind_address = "127.0.0.1:8080"
+ghostd_endpoint = "http://127.0.0.1:50052"
+
+# Database
+database_path = "walletd.db"

@@ -1,0 +1,11 @@
+[alias]
+# Quick aliases for common walletd commands
+walletd = "run --bin walletd --"
+daemon = "run --bin walletd -- start"
+start = "run --bin walletd -- --config walletd.toml start"
+cli = "run --bin walletd --"
+
+# Development aliases
+dev = "run --bin walletd -- --debug --config walletd.toml start"
+bg = "run --bin walletd -- start --background"
+check-all = ["check", "clippy", "test"]
