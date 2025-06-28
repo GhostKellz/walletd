@@ -13,6 +13,8 @@ pub struct Config {
     pub security: SecurityConfig,
     pub features: FeatureConfig,
     pub crypto: CryptoConfig,
+    #[serde(default)]
+    pub quic: QuicConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +54,24 @@ pub struct CryptoConfig {
     pub key_derivation_iterations: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuicConfig {
+    pub enabled: bool,
+    pub bind_address: String,
+    pub alpn_protocols: Vec<String>,
+    pub max_concurrent_streams: u64,
+    pub max_idle_timeout: u64,
+    pub enable_0rtt: bool,
+    pub tls: QuicTlsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuicTlsConfig {
+    pub cert_path: String,
+    pub key_path: String,
+    pub use_self_signed: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -88,6 +108,25 @@ impl Default for Config {
                 deterministic_salt: "walletd-passphrase-salt".to_string(),
                 enable_zig_ffi: cfg!(feature = "zig-ffi"),
                 key_derivation_iterations: 100_000,
+            },
+            quic: QuicConfig::default(),
+        }
+    }
+}
+
+impl Default for QuicConfig {
+    fn default() -> Self {
+        Self {
+            enabled: cfg!(feature = "quic"),
+            bind_address: "0.0.0.0:9090".to_string(),
+            alpn_protocols: vec!["grpc".to_string(), "walletd-v1".to_string()],
+            max_concurrent_streams: 1000,
+            max_idle_timeout: 30000,
+            enable_0rtt: true,
+            tls: QuicTlsConfig {
+                cert_path: "certs/walletd.crt".to_string(),
+                key_path: "certs/walletd.key".to_string(),
+                use_self_signed: true,
             },
         }
     }

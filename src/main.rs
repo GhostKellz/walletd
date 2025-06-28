@@ -14,6 +14,8 @@ mod signer;
 mod ffi;
 mod grpc;
 mod cli;
+#[cfg(feature = "quic")]
+mod quic;
 
 use crate::config::Config;
 use crate::api::ApiServer;
@@ -97,9 +99,33 @@ async fn main() -> Result<()> {
         }
     });
     
+    // Start QUIC server if enabled
+    #[cfg(feature = "quic")]
+    let quic_handle = if config.quic.enabled {
+        let quic_server = crate::quic::QuicServer::new(
+            config.clone(),
+            wallet_manager.clone(),
+            ledger.clone(),
+            auth_manager.clone(),
+        );
+        
+        Some(tokio::spawn(async move {
+            if let Err(e) = quic_server.serve().await {
+                warn!("QUIC server error: {}", e);
+            }
+        }))
+    } else {
+        None
+    };
+    
     info!("🚀 walletd started successfully");
     info!("📡 gRPC server listening on: {}", config.grpc_bind_address);
     info!("🌐 REST API server listening on: {}", config.api_bind_address);
+    
+    #[cfg(feature = "quic")]
+    if config.quic.enabled {
+        info!("⚡ QUIC server listening on: {}", config.quic.bind_address);
+    }
     
     // Wait for shutdown signal
     signal::ctrl_c().await?;
@@ -108,6 +134,11 @@ async fn main() -> Result<()> {
     // Graceful shutdown
     grpc_handle.abort();
     api_handle.abort();
+    
+    #[cfg(feature = "quic")]
+    if let Some(handle) = quic_handle {
+        handle.abort();
+    }
     
     info!("👋 walletd stopped");
     Ok(())
