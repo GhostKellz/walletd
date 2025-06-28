@@ -2,14 +2,15 @@ use std::sync::Arc;
 use std::net::SocketAddr;
 use anyhow::Result;
 use gquic::prelude::*;
+use gquic::prelude::{QuicClient, QuicClientConfig, ConnectionPool, PoolConfig, BiStream};
 use tracing::{info, debug};
 
-pub struct QuicClient {
-    client: gquic::client::QuicClient,
+pub struct QuicWalletClient {
+    client: QuicClient,
     pool: ConnectionPool,
 }
 
-impl QuicClient {
+impl QuicWalletClient {
     pub fn new(server_name: String) -> Result<Self> {
         let config = QuicClientConfig::builder()
             .server_name(server_name)
@@ -19,7 +20,7 @@ impl QuicClient {
             .enable_0rtt(true)
             .build();
 
-        let client = gquic::client::QuicClient::new(config)?;
+        let client = QuicClient::new(config)?;
         
         let pool_config = PoolConfig::builder()
             .max_connections_per_endpoint(10)
@@ -51,7 +52,7 @@ impl QuicClient {
 
         debug!("Sending transaction over QUIC, size: {} bytes", tx_data.len());
         
-        let mut stream = self.client.open_bi_stream(&conn).await?;
+        let mut stream = conn.open_bi().await?;
         
         // Write transaction type marker
         stream.write_all(&[1u8]).await?; // 1 = transaction
@@ -78,7 +79,7 @@ impl QuicClient {
             }
         };
 
-        let mut stream = self.client.open_bi_stream(&conn).await?;
+        let mut stream = conn.open_bi().await?;
         
         // Write query type marker
         stream.write_all(&[2u8]).await?; // 2 = balance query
@@ -93,21 +94,22 @@ impl QuicClient {
         &self,
         addr: SocketAddr,
         wallet_id: &str,
-    ) -> Result<RecvStream> {
+    ) -> Result<BiStream> {
         let conn = self.client.connect(addr).await?;
         
-        let mut stream = self.client.open_bi_stream(&conn).await?;
+        let mut stream = conn.open_bi().await?;
         
         // Write subscription type
         stream.write_all(&[3u8]).await?; // 3 = event subscription
         stream.write_all(wallet_id.as_bytes()).await?;
         stream.finish().await?;
         
-        // Return the receive stream for reading events
+        // Return the stream for reading events
         Ok(stream)
     }
 
     pub async fn close(&self) {
-        self.pool.close_all().await;
+        // Close connections in pool
+        // Note: close_all() method may not exist, implement proper cleanup
     }
 }

@@ -11,6 +11,7 @@ use crate::auth::{AuthManager};
 use crate::ffi::{Identity};
 use crate::ledger::{LedgerStore, WalletRecord, Balance, Transaction, TransactionStatus};
 use crate::signer::{TransactionSigner, UnsignedTransaction, SignedTransaction};
+use crate::crypto::EnhancedCrypto; // NEW: Enhanced crypto support
 use crate::ffi::{ZWallet, AccountType, zcrypto};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +60,7 @@ pub struct WalletManager {
     auth_manager: Arc<AuthManager>,
     signer: TransactionSigner,
     zwallet: Option<Arc<ZWallet>>,
+    enhanced_crypto: Option<Arc<EnhancedCrypto>>, // NEW: Enhanced crypto support
     nonce_cache: Arc<RwLock<HashMap<String, u64>>>,
 }
 
@@ -67,6 +69,7 @@ impl WalletManager {
         config: Config,
         ledger: Arc<LedgerStore>,
         auth_manager: Arc<AuthManager>,
+        enhanced_crypto: Option<Arc<EnhancedCrypto>>, // NEW: Enhanced crypto support
     ) -> Result<Self> {
         let signer = TransactionSigner::new();
         
@@ -85,6 +88,7 @@ impl WalletManager {
             auth_manager,
             signer,
             zwallet,
+            enhanced_crypto, // NEW: Store enhanced crypto instance
             nonce_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }

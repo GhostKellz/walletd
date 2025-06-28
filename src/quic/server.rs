@@ -64,7 +64,7 @@ impl QuicServer {
         let server = server_builder
             .max_concurrent_bidi_streams(self.config.quic.max_concurrent_streams)
             .max_concurrent_uni_streams(self.config.quic.max_concurrent_streams)
-            .max_idle_timeout(self.config.quic.max_idle_timeout)
+            .max_idle_timeout(std::time::Duration::from_millis(self.config.quic.max_idle_timeout))
             .with_handler(Arc::new(handler))
             .build()?;
 

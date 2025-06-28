@@ -2,14 +2,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use gquic::prelude::*;
-use gquic::server::handler::ConnectionHandler;
-use tracing::{info, debug, warn, error};
-use tonic::Request;
-
+use gquic::server::ConnectionHandler;
+use gquic::{Connection, BiStream};
+use gquic::prelude::QuicServerConfig;
+use tracing::{info, warn};
 use crate::wallet::WalletManager;
 use crate::ledger::LedgerStore;
 use crate::auth::AuthManager;
-use crate::grpc::walletd::wallet_service_server::WalletService;
 
 const STREAM_TYPE_CONTROL: u8 = 0;
 const STREAM_TYPE_TRANSACTION: u8 = 1;
@@ -37,11 +36,10 @@ impl WalletQuicHandler {
 
     async fn handle_grpc_stream(
         &self,
-        mut send: SendStream,
-        mut recv: RecvStream,
+        mut stream: BiStream,
     ) -> Result<()> {
         // Read gRPC request
-        let request_data = recv.read_to_end(10 * 1024 * 1024).await?; // 10MB max
+        let request_data = stream.read_to_end(10 * 1024 * 1024).await?; // 10MB max
         
         // Parse gRPC method from request (simplified - in production use proper gRPC parsing)
         // For now, we'll handle based on the first byte indicating the method
@@ -59,34 +57,33 @@ impl WalletQuicHandler {
         };
 
         // Send response
-        send.write_all(&response_data).await?;
-        send.finish().await?;
+        stream.write_all(&response_data).await?;
+        stream.finish().await?;
 
         Ok(())
     }
 
     async fn handle_custom_protocol_stream(
         &self,
-        mut send: SendStream,
-        mut recv: RecvStream,
+        mut stream: BiStream,
         stream_type: u8,
     ) -> Result<()> {
         match stream_type {
             STREAM_TYPE_CONTROL => {
                 // Handle authentication and session management
-                self.handle_control_stream(send, recv).await
+                self.handle_control_stream(stream).await
             }
             STREAM_TYPE_TRANSACTION => {
                 // Handle transaction signing with multiplexing
-                self.handle_transaction_stream(send, recv).await
+                self.handle_transaction_stream(stream).await
             }
             STREAM_TYPE_QUERY => {
                 // Handle wallet queries (balances, history)
-                self.handle_query_stream(send, recv).await
+                self.handle_query_stream(stream).await
             }
             STREAM_TYPE_EVENT => {
                 // Handle server-push events
-                self.handle_event_stream(send, recv).await
+                self.handle_event_stream(stream).await
             }
             _ => Err(anyhow::anyhow!("Unknown stream type")),
         }
@@ -94,66 +91,62 @@ impl WalletQuicHandler {
 
     async fn handle_control_stream(
         &self,
-        mut send: SendStream,
-        mut recv: RecvStream,
+        mut stream: BiStream,
     ) -> Result<()> {
         // Read authentication request
-        let auth_data = recv.read_to_end(1024).await?;
+        let auth_data = stream.read_to_end(1024).await?;
         
         // TODO: Implement RealID authentication
         // For now, simple auth check
         let is_authenticated = auth_data.len() > 0;
         
         if is_authenticated {
-            send.write_all(b"AUTH_OK").await?;
+            stream.write_all(b"AUTH_OK").await?;
         } else {
-            send.write_all(b"AUTH_FAIL").await?;
+            stream.write_all(b"AUTH_FAIL").await?;
         }
         
-        send.finish().await?;
+        stream.finish().await?;
         Ok(())
     }
 
     async fn handle_transaction_stream(
         &self,
-        mut send: SendStream,
-        mut recv: RecvStream,
+        mut stream: BiStream,
     ) -> Result<()> {
         // Read transaction request
-        let tx_data = recv.read_to_end(1 * 1024 * 1024).await?; // 1MB max
+        let tx_data = stream.read_to_end(1 * 1024 * 1024).await?; // 1MB max
         
         // Parse and process transaction
         // TODO: Implement proper transaction parsing and signing
         
         // Send signed transaction back
-        send.write_all(b"SIGNED_TX").await?;
-        send.finish().await?;
+        stream.write_all(b"SIGNED_TX").await?;
+        stream.finish().await?;
         
         Ok(())
     }
 
     async fn handle_query_stream(
         &self,
-        mut send: SendStream,
-        mut recv: RecvStream,
+        mut stream: BiStream,
     ) -> Result<()> {
         // Read query request
-        let query_data = recv.read_to_end(1024).await?;
+        let query_data = stream.read_to_end(1024).await?;
         
         // Process query
         // TODO: Implement proper query handling
         
         // Send query response
-        send.write_all(b"QUERY_RESPONSE").await?;
-        send.finish().await?;
+        stream.write_all(b"QUERY_RESPONSE").await?;
+        stream.finish().await?;
         
         Ok(())
     }
 
     async fn handle_event_stream(
         &self,
-        mut send: SendStream,
-        mut _recv: RecvStream,
+        mut stream: BiStream,
     ) -> Result<()> {
         // This is a server-push stream for events
         // Keep the stream open and send events as they occur
@@ -161,7 +154,7 @@ impl WalletQuicHandler {
         // TODO: Implement event subscription and pushing
         
         // For now, just send a test event
-        send.write_all(b"EVENT: Wallet created").await?;
+        stream.write_all(b"EVENT: Wallet created").await?;
         
         Ok(())
     }
@@ -187,23 +180,21 @@ impl WalletQuicHandler {
 impl ConnectionHandler for WalletQuicHandler {
     async fn handle_connection(
         &self,
-        connection: NewConnection,
-        _config: Arc<QuicServerConfig>,
+        connection: Connection,
     ) -> Result<()> {
-        let remote_addr = connection.connection.remote_address();
-        let protocol = connection.connection.protocol().map(|p| p.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let remote_addr = connection.remote_address().await;
+        let protocol = "walletd-v1"; // Use default protocol
         
         info!("New QUIC connection from {} using protocol: {}", remote_addr, protocol);
 
         // Handle different protocols
-        match protocol.as_str() {
+        match protocol {
             "grpc" => {
                 // Handle gRPC-over-QUIC
-                while let Ok((send, recv)) = connection.bi_streams.accept().await {
+                while let Ok(Some(stream)) = connection.accept_bi().await {
                     let handler = self.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handler.handle_grpc_stream(send, recv).await {
+                        if let Err(e) = handler.handle_grpc_stream(stream).await {
                             warn!("Error handling gRPC stream: {}", e);
                         }
                     });
@@ -211,15 +202,15 @@ impl ConnectionHandler for WalletQuicHandler {
             }
             "walletd-v1" => {
                 // Handle custom protocol with multiplexed streams
-                while let Ok((send, recv)) = connection.bi_streams.accept().await {
+                while let Ok(Some(mut stream)) = connection.accept_bi().await {
                     let handler = self.clone();
                     tokio::spawn(async move {
                         // Read stream type from first byte
                         let mut stream_type_buf = [0u8; 1];
-                        if recv.read_exact(&mut stream_type_buf).await.is_ok() {
+                        if stream.read_chunk().await.is_ok() {
                             let stream_type = stream_type_buf[0];
                             if let Err(e) = handler.handle_custom_protocol_stream(
-                                send, recv, stream_type
+                                stream, stream_type
                             ).await {
                                 warn!("Error handling custom stream: {}", e);
                             }

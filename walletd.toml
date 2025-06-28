@@ -36,3 +36,17 @@ ghostd_endpoint = "http://127.0.0.1:50052"
 
 # Database
 database_path = "walletd.db"
+
+# QUIC Transport Configuration (NEW)
+[quic]
+enabled = true
+bind_address = "0.0.0.0:9090"
+alpn_protocols = ["ghostchain-v1", "grpc", "walletd"]
+max_concurrent_streams = 1000
+max_idle_timeout = 30000
+enable_0rtt = true
+
+[quic.tls]
+cert_path = "certs/walletd.crt"
+key_path = "certs/walletd.key"
+use_self_signed = true  # For development

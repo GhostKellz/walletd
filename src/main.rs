@@ -14,12 +14,14 @@ mod signer;
 mod ffi;
 mod grpc;
 mod cli;
-#[cfg(feature = "quic")]
-mod quic;
+mod quic;  // NEW: QUIC transport module
+mod crypto; // NEW: Enhanced crypto module
 
 use crate::config::Config;
 use crate::api::ApiServer;
 use crate::grpc::GrpcServer;
+use crate::quic::QuicServer; // NEW: QUIC server
+use crate::crypto::EnhancedCrypto; // NEW: Enhanced crypto
 use crate::ledger::LedgerStore;
 use crate::wallet::WalletManager;
 use crate::auth::AuthManager;
@@ -54,6 +56,23 @@ async fn main() -> Result<()> {
     let config = Config::load()?;
     info!("📁 Configuration loaded from: {}", config.config_path.display());
     
+    // Initialize enhanced crypto backend if available
+    let enhanced_crypto = if cfg!(feature = "enhanced-crypto") {
+        match EnhancedCrypto::new() {
+            Ok(crypto) => {
+                info!("🔐 Enhanced gcrypt backend initialized with algorithms: {:?}", crypto.supported_algorithms());
+                Some(Arc::new(crypto))
+            }
+            Err(e) => {
+                warn!("⚠️  Failed to initialize enhanced crypto: {}", e);
+                None
+            }
+        }
+    } else {
+        info!("ℹ️  Using standard crypto backend (enhanced-crypto feature not enabled)");
+        None
+    };
+
     // Initialize database/ledger
     let ledger: Arc<LedgerStore> = Arc::new(LedgerStore::new(&config.database_path).await?);
     info!("💾 Ledger store initialized");
@@ -62,12 +81,13 @@ async fn main() -> Result<()> {
     let auth_manager: Arc<AuthManager> = Arc::new(AuthManager::new(config.clone()).await?);
     info!("🔐 Authentication manager initialized");
     
-    // Initialize wallet manager
+    // Initialize wallet manager with enhanced crypto support
     let wallet_manager: Arc<WalletManager> = Arc::new(
         WalletManager::new(
             config.clone(),
             ledger.clone(),
-            auth_manager.clone()
+            auth_manager.clone(),
+            enhanced_crypto.clone(),
         ).await?
     );
     info!("💼 Wallet manager initialized");
@@ -85,6 +105,26 @@ async fn main() -> Result<()> {
         }
     });
     
+    // Start QUIC server (NEW)
+    let quic_enabled = config.quic.enabled;
+    let quic_handle = if quic_enabled {
+        let quic_server = QuicServer::new(
+            config.clone(),
+            wallet_manager.clone(),
+            ledger.clone(),
+            auth_manager.clone(),
+        );
+        
+        Some(tokio::spawn(async move {
+            if let Err(e) = quic_server.serve().await {
+                warn!("QUIC server error: {}", e);
+            }
+        }))
+    } else {
+        info!("📡 QUIC server disabled in configuration");
+        None
+    };
+
     // Start REST API server
     let api_server = ApiServer::new(
         config.clone(),
@@ -99,32 +139,21 @@ async fn main() -> Result<()> {
         }
     });
     
-    // Start QUIC server if enabled
-    #[cfg(feature = "quic")]
-    let quic_handle = if config.quic.enabled {
-        let quic_server = crate::quic::QuicServer::new(
-            config.clone(),
-            wallet_manager.clone(),
-            ledger.clone(),
-            auth_manager.clone(),
-        );
-        
-        Some(tokio::spawn(async move {
-            if let Err(e) = quic_server.serve().await {
-                warn!("QUIC server error: {}", e);
-            }
-        }))
-    } else {
-        None
-    };
-    
     info!("🚀 walletd started successfully");
     info!("📡 gRPC server listening on: {}", config.grpc_bind_address);
     info!("🌐 REST API server listening on: {}", config.api_bind_address);
-    
-    #[cfg(feature = "quic")]
-    if config.quic.enabled {
+    if quic_enabled {
         info!("⚡ QUIC server listening on: {}", config.quic.bind_address);
+        info!("🔌 QUIC ALPN protocols: {:?}", config.quic.alpn_protocols);
+    }
+    
+    // Show feature status
+    info!("🔧 Features enabled:");
+    info!("   • QUIC transport: {}", cfg!(feature = "quic"));
+    info!("   • Enhanced crypto: {}", cfg!(feature = "enhanced-crypto"));
+    info!("   • Zig FFI: {}", config.crypto.enable_zig_ffi);
+    if let Some(ref crypto) = enhanced_crypto {
+        info!("   • Supported algorithms: {:?}", crypto.supported_algorithms());
     }
     
     // Wait for shutdown signal
@@ -134,10 +163,8 @@ async fn main() -> Result<()> {
     // Graceful shutdown
     grpc_handle.abort();
     api_handle.abort();
-    
-    #[cfg(feature = "quic")]
-    if let Some(handle) = quic_handle {
-        handle.abort();
+    if let Some(quic_handle) = quic_handle {
+        quic_handle.abort();
     }
     
     info!("👋 walletd stopped");
