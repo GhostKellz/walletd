@@ -1,6 +1,6 @@
 [package]
 name = "walletd"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "GhostChain Secure Wallet Daemon - Web5 wallet backend with ZID authentication"
 authors = ["GhostKellz"]
@@ -11,11 +11,14 @@ license = "MIT"
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = "0.7"
 
-# QUIC transport (NEW)
-gquic = { git = "https://github.com/ghostkellz/gquic", features = ["gcrypt-integration", "metrics"], optional = true }
+# PRIMARY: Zig-based QUIC transport (our main focus)
+zquic-sys = { git = "https://github.com/ghostkellz/zquic", features = ["ffi", "crypto-integration"], optional = true }
 
-# Enhanced crypto backend (NEW)
-gcrypt = { git = "https://github.com/ghostkellz/gcrypt", features = ["std", "rand_core", "ed25519", "secp256k1", "blake3"], optional = true }
+# PRIMARY: Zig-based crypto backend (our main focus)
+zcrypto-sys = { git = "https://github.com/ghostkellz/zcrypto", features = ["ffi"], optional = true }
+
+# FALLBACK: Rust-based alternatives (keeping gcrypt for now)
+gcrypt = { git = "https://github.com/ghostkellz/gcrypt", features = ["ed25519", "secp256k1", "blake3"], optional = true }
 
 # gRPC and protobuf
 tonic = "0.12"
@@ -63,9 +66,6 @@ libc = "0.2"
 # CLI
 clap = { version = "4.4", features = ["derive"] }
 
-# Async traits
-async-trait = "0.1"
-
 [build-dependencies]
 tonic-build = "0.12"
 
@@ -73,10 +73,13 @@ tonic-build = "0.12"
 default = ["evm"]
 evm = ["ethers"]
 zig-ffi = []
-# NEW: QUIC and enhanced crypto features
-quic = ["gquic"]
-enhanced-crypto = ["gcrypt"]
-full-quic = ["quic", "enhanced-crypto"]
+# PRIMARY: Zig-based transport and crypto (our main focus)
+zquic = ["zquic-sys", "zcrypto-sys"]
+zcrypto = ["zcrypto-sys"]
+# FALLBACK: Rust-based alternatives
+enhanced-crypto = ["gcrypt"]  
+# COMBINED: All features for development/testing
+full-integration = ["zquic", "zcrypto", "enhanced-crypto"]
 
 [[bin]]
 name = "walletd"

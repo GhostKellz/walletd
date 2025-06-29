@@ -2,23 +2,30 @@ use anyhow::Result;
 use tracing::{info, warn};
 
 #[cfg(feature = "enhanced-crypto")]
-use gcrypt::protocols::ed25519::{SecretKey, PublicKey, Signature, SignatureError};
-
-#[cfg(feature = "enhanced-crypto")]
-use rand::rngs::OsRng;
+use gcrypt::{CryptoBackend, KeyType, SignatureType};
 
 use crate::ffi::{Algorithm, Keypair};
 
-/// Enhanced crypto operations using gcrypt for Ed25519 and fallbacks for other algorithms
+/// Enhanced crypto operations using gcrypt backend
 pub struct EnhancedCrypto {
-    // gcrypt provides Ed25519 operations only, other algorithms use fallback implementations
+    #[cfg(feature = "enhanced-crypto")]
+    backend: CryptoBackend,
 }
 
 impl EnhancedCrypto {
     #[cfg(feature = "enhanced-crypto")]
     pub fn new() -> Result<Self> {
-        info!("🔐 Enhanced gcrypt backend initialized with Ed25519 support");
-        Ok(Self {})
+        let backend = CryptoBackend::builder()
+            .with_ed25519()
+            .with_secp256k1()
+            .with_secp256r1()
+            .with_blake3()
+            .with_secure_random()
+            .with_constant_time_ops()
+            .build()?;
+
+        info!("🔐 Enhanced gcrypt backend initialized with multi-algorithm support");
+        Ok(Self { backend })
     }
 
     #[cfg(not(feature = "enhanced-crypto"))]
@@ -29,23 +36,20 @@ impl EnhancedCrypto {
 
     #[cfg(feature = "enhanced-crypto")]
     pub fn generate_keypair(&self, algorithm: Algorithm) -> Result<Keypair> {
-        match algorithm {
-            Algorithm::Ed25519 => {
-                let mut rng = OsRng;
-                let secret_key = SecretKey::generate(&mut rng);
-                let public_key = secret_key.public_key();
-                
-                Ok(Keypair {
-                    private_key: secret_key.to_bytes().to_vec(),
-                    public_key: public_key.to_bytes(),
-                    algorithm: Algorithm::Ed25519,
-                })
-            }
-            _ => {
-                // Fallback for non-Ed25519 algorithms
-                self.generate_keypair_fallback(algorithm)
-            }
-        }
+        let key_type = match algorithm {
+            Algorithm::Ed25519 => KeyType::Ed25519,
+            Algorithm::Secp256k1 => KeyType::Secp256k1,
+            Algorithm::Secp256r1 => KeyType::Secp256r1,
+        };
+
+        let keypair = self.backend.generate_keypair(key_type)?;
+        
+        Ok(Keypair {
+            private_key: keypair.private_key.data,
+            public_key: keypair.public_key.data.try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid public key length"))?,
+            algorithm,
+        })
     }
 
     #[cfg(not(feature = "enhanced-crypto"))]
@@ -56,8 +60,7 @@ impl EnhancedCrypto {
                 use ed25519_dalek::{SigningKey, Signer};
                 use rand::rngs::OsRng;
                 
-                let mut rng = OsRng;
-                let signing_key = SigningKey::from_bytes(&rand::random::<[u8; 32]>());
+                let signing_key = SigningKey::generate(&mut OsRng);
                 let public_key = signing_key.verifying_key();
                 
                 Ok(Keypair {
@@ -74,19 +77,19 @@ impl EnhancedCrypto {
 
     #[cfg(feature = "enhanced-crypto")]
     pub fn sign_data(&self, private_key: &[u8], data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
-        match algorithm {
-            Algorithm::Ed25519 => {
-                let key_bytes: [u8; 32] = private_key.try_into()
-                    .map_err(|_| anyhow::anyhow!("Invalid Ed25519 private key length"))?;
-                let secret_key = SecretKey::from_bytes(&key_bytes);
-                let signature = secret_key.sign_deterministic(data);
-                Ok(signature.to_bytes().to_vec())
-            }
-            _ => {
-                // Fallback for non-Ed25519 algorithms
-                self.sign_data_fallback(private_key, data, algorithm)
-            }
-        }
+        let key_type = match algorithm {
+            Algorithm::Ed25519 => KeyType::Ed25519,
+            Algorithm::Secp256k1 => KeyType::Secp256k1,
+            Algorithm::Secp256r1 => KeyType::Secp256r1,
+        };
+
+        let private_key_obj = gcrypt::PrivateKey {
+            data: private_key.to_vec(),
+            key_type,
+        };
+
+        let signature = self.backend.sign(&private_key_obj, data)?;
+        Ok(signature.data)
     }
 
     #[cfg(not(feature = "enhanced-crypto"))]
@@ -116,27 +119,27 @@ impl EnhancedCrypto {
         signature: &[u8],
         algorithm: Algorithm,
     ) -> Result<bool> {
-        match algorithm {
-            Algorithm::Ed25519 => {
-                let public_key_bytes: [u8; 32] = public_key.try_into()
-                    .map_err(|_| anyhow::anyhow!("Invalid Ed25519 public key length"))?;
-                let signature_bytes: [u8; 64] = signature.try_into()
-                    .map_err(|_| anyhow::anyhow!("Invalid Ed25519 signature length"))?;
-                
-                let public_key_obj = PublicKey::from_bytes(&public_key_bytes)
-                    .map_err(|e| anyhow::anyhow!("Invalid Ed25519 public key: {:?}", e))?;
-                let signature_obj = Signature::from_bytes(&signature_bytes);
-                
-                match public_key_obj.verify(data, &signature_obj) {
-                    Ok(()) => Ok(true),
-                    Err(_) => Ok(false),
-                }
-            }
-            _ => {
-                // Fallback for non-Ed25519 algorithms
-                self.verify_signature_fallback(public_key, data, signature, algorithm)
-            }
-        }
+        let key_type = match algorithm {
+            Algorithm::Ed25519 => KeyType::Ed25519,
+            Algorithm::Secp256k1 => KeyType::Secp256k1,
+            Algorithm::Secp256r1 => KeyType::Secp256r1,
+        };
+
+        let public_key_obj = gcrypt::PublicKey {
+            data: public_key.to_vec(),
+            key_type,
+        };
+
+        let signature_obj = gcrypt::Signature {
+            data: signature.to_vec(),
+            signature_type: match algorithm {
+                Algorithm::Ed25519 => SignatureType::Ed25519,
+                Algorithm::Secp256k1 => SignatureType::EcdsaSecp256k1,
+                Algorithm::Secp256r1 => SignatureType::EcdsaSecp256r1,
+            },
+        };
+
+        self.backend.verify(&public_key_obj, data, &signature_obj)
     }
 
     #[cfg(not(feature = "enhanced-crypto"))]
@@ -173,12 +176,8 @@ impl EnhancedCrypto {
 
     #[cfg(feature = "enhanced-crypto")]
     pub fn hash_blake3(&self, data: &[u8]) -> Result<[u8; 32]> {
-        // gcrypt doesn't provide BLAKE3, use fallback
-        use sha2::{Sha256, Digest};
-        warn!("⚠️  BLAKE3 not available in gcrypt, falling back to SHA256");
-        let mut hasher = Sha256::new();
-        hasher.update(data);
-        Ok(hasher.finalize().into())
+        let hash = self.backend.hash_blake3(data)?;
+        Ok(hash.try_into().map_err(|_| anyhow::anyhow!("Invalid hash length"))?)
     }
 
     #[cfg(not(feature = "enhanced-crypto"))]
@@ -192,12 +191,7 @@ impl EnhancedCrypto {
 
     #[cfg(feature = "enhanced-crypto")]
     pub fn secure_random(&self, length: usize) -> Result<Vec<u8>> {
-        // gcrypt doesn't provide general secure_random, use rand crate
-        use rand::RngCore;
-        let mut rng = OsRng;
-        let mut bytes = vec![0u8; length];
-        rng.fill_bytes(&mut bytes);
-        Ok(bytes)
+        self.backend.secure_random(length)
     }
 
     #[cfg(not(feature = "enhanced-crypto"))]
@@ -210,29 +204,13 @@ impl EnhancedCrypto {
     }
 
     pub fn supported_algorithms(&self) -> Vec<Algorithm> {
-        // gcrypt only provides Ed25519, others use fallback
-        vec![Algorithm::Ed25519, Algorithm::Secp256k1, Algorithm::Secp256r1]
-    }
-
-    // Fallback implementations for non-Ed25519 algorithms
-    fn generate_keypair_fallback(&self, algorithm: Algorithm) -> Result<Keypair> {
-        match algorithm {
-            Algorithm::Ed25519 => unreachable!("Ed25519 should use gcrypt path"),
-            _ => Err(anyhow::anyhow!("Algorithm {:?} not supported in fallback mode", algorithm))
+        #[cfg(feature = "enhanced-crypto")]
+        {
+            vec![Algorithm::Ed25519, Algorithm::Secp256k1, Algorithm::Secp256r1]
         }
-    }
-
-    fn sign_data_fallback(&self, private_key: &[u8], data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>> {
-        match algorithm {
-            Algorithm::Ed25519 => unreachable!("Ed25519 should use gcrypt path"),
-            _ => Err(anyhow::anyhow!("Algorithm {:?} not supported in fallback mode", algorithm))
-        }
-    }
-
-    fn verify_signature_fallback(&self, public_key: &[u8], data: &[u8], signature: &[u8], algorithm: Algorithm) -> Result<bool> {
-        match algorithm {
-            Algorithm::Ed25519 => unreachable!("Ed25519 should use gcrypt path"),
-            _ => Err(anyhow::anyhow!("Algorithm {:?} not supported in fallback mode", algorithm))
+        #[cfg(not(feature = "enhanced-crypto"))]
+        {
+            vec![Algorithm::Ed25519]
         }
     }
 }
